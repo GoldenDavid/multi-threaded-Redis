@@ -3,29 +3,42 @@ package main
 import (
 	"log"
 	"net"
+	"io"
 )
 
 func handleConnection(conn net.Conn) {
-	defer conn.Close()
-	var buf []byte = make([]byte, 1000)
+	log.Println("handle conn from =", conn.RemoteAddr())
 	for {
-		_, err := conn.Read(buf)
+		cmd, err := readCommand(conn)
+		log.Println("command:", cmd)
 		if err != nil {
-			log.Println("client disconnected: ", err)
-			return
+			conn.Close()
+			log.Println("client disconnected: ", conn.RemoteAddr())
+			if err == io.EOF {
+				break
+			}
 		}
 
-		//pretend to process the req
-		_, err = conn.Write([]byte("HTTP/1.1 200 OK\r\n" +
-			"Content-Type: text/plain\r\n" +
-			"Content-Length: 11\r\n" +
-			"\r\n" +
-			"Hello World"))
-		if err != nil {
-			log.Println("write error:", err)
-			return
+		if err = respond(cmd,conn); err != nil {
+			log.Println("err write:", err)
 		}
 	}
+}
+
+func readCommand(c net.Conn) (string, error) {
+	var buf []byte = make([]byte, 512)
+	n, err := c.Read(buf)
+	if err != nil {
+		return "", err
+	}
+	return string(buf[:n]), nil
+}
+
+func respond(cmd string,c net.Conn) error {
+	if _, err := c.Write([]byte(cmd)); err != nil {
+		return err
+	}
+	return nil
 }
 
 func main() {
@@ -43,7 +56,6 @@ func main() {
 			log.Println(err)
 		}
 
-		log.Println("handle conn from =", conn.RemoteAddr())
 		// create a go routine to handle the connection
 		go handleConnection(conn)
 	}
