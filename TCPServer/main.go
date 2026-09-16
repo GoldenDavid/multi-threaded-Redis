@@ -4,12 +4,12 @@ import (
 	"io"
 	"log"
 	"net"
-	"strings"
 
+	"multi-threaded-Redis/Internal/database"
 	"multi-threaded-Redis/Internal/resp"
 )
 
-func handleConnection(conn net.Conn) {
+func handleConnection(conn net.Conn, db *database.Database) {
 	defer conn.Close()
 	log.Println("handle conn from =", conn.RemoteAddr())
 
@@ -29,20 +29,10 @@ func handleConnection(conn net.Conn) {
 
 		log.Printf("command received: %+v\n", cmd)
 
-		// Basic request handling
-		if cmd.Type == "array" && len(cmd.Array) > 0 {
-			commandName := strings.ToUpper(cmd.Array[0].Bulk)
-			
-			switch commandName {
-			case "PING":
-				err = writer.Write(resp.Value{Type: "string", Str: "PONG"})
-			default:
-				err = writer.Write(resp.Value{Type: "error", Str: "ERR unknown command '" + commandName + "'"})
-			}
-		} else {
-			err = writer.Write(resp.Value{Type: "error", Str: "ERR invalid request"})
-		}
+		// Execute command against database
+		result := db.Exec(cmd)
 
+		err = writer.Write(result)
 		if err != nil {
 			log.Println("err write:", err)
 			return
@@ -58,6 +48,9 @@ func main() {
 
 	log.Println("Listening at port 3000")
 
+	// Instantiate the database
+	db := database.NewDatabase()
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -66,6 +59,6 @@ func main() {
 		}
 
 		// create a go routine to handle the connection
-		go handleConnection(conn)
+		go handleConnection(conn, db)
 	}
 }

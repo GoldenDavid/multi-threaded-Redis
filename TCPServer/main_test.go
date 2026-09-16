@@ -8,7 +8,7 @@ import (
 	"multi-threaded-Redis/Internal/resp"
 )
 
-func TestTCPServerPingPong(t *testing.T) {
+func TestTCPServerCommands(t *testing.T) {
 	// Start the server in a goroutine
 	go main()
 
@@ -22,31 +22,60 @@ func TestTCPServerPingPong(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// We can use our writer and parser to communicate with our server
 	writer := resp.NewWriter(conn)
 	parser := resp.NewParser(conn)
 
-	// Send PING command
-	pingCmd := resp.Value{
-		Type: "array",
-		Array: []resp.Value{
-			{Type: "bulk", Bulk: "PING"},
-		},
+	// Helper function to send and read
+	sendCommand := func(args ...string) resp.Value {
+		cmdArgs := make([]resp.Value, len(args))
+		for i, arg := range args {
+			cmdArgs[i] = resp.Value{Type: "bulk", Bulk: arg}
+		}
+		
+		cmd := resp.Value{
+			Type:  "array",
+			Array: cmdArgs,
+		}
+
+		err = writer.Write(cmd)
+		if err != nil {
+			t.Fatalf("Failed to write to server: %v", err)
+		}
+
+		response, err := parser.Parse()
+		if err != nil {
+			t.Fatalf("Failed to read from server: %v", err)
+		}
+		return response
 	}
 
-	err = writer.Write(pingCmd)
-	if err != nil {
-		t.Fatalf("Failed to write to server: %v", err)
+	// 1. Test PING
+	res := sendCommand("PING")
+	if res.Type != "string" || res.Str != "PONG" {
+		t.Errorf("Expected PONG, got %v", res)
 	}
 
-	// Read response
-	response, err := parser.Parse()
-	if err != nil {
-		t.Fatalf("Failed to read from server: %v", err)
+	// 2. Test GET non-existent key
+	res = sendCommand("GET", "mykey")
+	if res.Type != "null" {
+		t.Errorf("Expected null for GET non-existent key, got %v", res)
 	}
 
-	// Verify response is +PONG\r\n
-	if response.Type != "string" || response.Str != "PONG" {
-		t.Errorf("Expected PONG, got %v", response)
+	// 3. Test SET
+	res = sendCommand("SET", "mykey", "myvalue")
+	if res.Type != "string" || res.Str != "OK" {
+		t.Errorf("Expected OK, got %v", res)
+	}
+
+	// 4. Test GET existing key
+	res = sendCommand("GET", "mykey")
+	if res.Type != "bulk" || res.Bulk != "myvalue" {
+		t.Errorf("Expected bulk string myvalue, got %v", res)
+	}
+	
+	// 5. Test DEL
+	res = sendCommand("DEL", "mykey")
+	if res.Type != "integer" || res.Num != 1 {
+		t.Errorf("Expected integer 1, got %v", res)
 	}
 }
