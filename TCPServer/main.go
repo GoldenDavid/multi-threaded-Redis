@@ -1,44 +1,53 @@
 package main
 
 import (
+	"io"
 	"log"
 	"net"
-	"io"
+	"strings"
+
+	"multi-threaded-Redis/Internal/resp"
 )
 
 func handleConnection(conn net.Conn) {
+	defer conn.Close()
 	log.Println("handle conn from =", conn.RemoteAddr())
+
+	parser := resp.NewParser(conn)
+	writer := resp.NewWriter(conn)
+
 	for {
-		cmd, err := readCommand(conn)
-		log.Println("command:", cmd)
+		cmd, err := parser.Parse()
 		if err != nil {
-			conn.Close()
-			log.Println("client disconnected: ", conn.RemoteAddr())
 			if err == io.EOF {
-				break
+				log.Println("client disconnected: ", conn.RemoteAddr())
+			} else {
+				log.Println("client read error: ", err)
 			}
+			return
 		}
 
-		if err = respond(cmd,conn); err != nil {
+		log.Printf("command received: %+v\n", cmd)
+
+		// Basic request handling
+		if cmd.Type == "array" && len(cmd.Array) > 0 {
+			commandName := strings.ToUpper(cmd.Array[0].Bulk)
+			
+			switch commandName {
+			case "PING":
+				err = writer.Write(resp.Value{Type: "string", Str: "PONG"})
+			default:
+				err = writer.Write(resp.Value{Type: "error", Str: "ERR unknown command '" + commandName + "'"})
+			}
+		} else {
+			err = writer.Write(resp.Value{Type: "error", Str: "ERR invalid request"})
+		}
+
+		if err != nil {
 			log.Println("err write:", err)
+			return
 		}
 	}
-}
-
-func readCommand(c net.Conn) (string, error) {
-	var buf []byte = make([]byte, 512)
-	n, err := c.Read(buf)
-	if err != nil {
-		return "", err
-	}
-	return string(buf[:n]), nil
-}
-
-func respond(cmd string,c net.Conn) error {
-	if _, err := c.Write([]byte(cmd)); err != nil {
-		return err
-	}
-	return nil
 }
 
 func main() {
@@ -50,14 +59,13 @@ func main() {
 	log.Println("Listening at port 3000")
 
 	for {
-		//conn == socket == communication channel
 		conn, err := listener.Accept()
 		if err != nil {
 			log.Println(err)
+			continue
 		}
 
 		// create a go routine to handle the connection
 		go handleConnection(conn)
 	}
-
 }
