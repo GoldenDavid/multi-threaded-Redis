@@ -9,12 +9,21 @@ import (
 	"multi-threaded-Redis/Internal/resp"
 )
 
-func handleConnection(conn net.Conn, db *database.Database) {
+type CommandJob struct {
+	client net.Conn
+	cmd    resp.Value
+}
+
+type ResponseJob struct {
+	client net.Conn
+	result resp.Value
+}
+
+func handleConnection(conn net.Conn, cmdQueue chan<- CommandJob) {
 	defer conn.Close()
 	log.Println("handle conn from =", conn.RemoteAddr())
 
 	parser := resp.NewParser(conn)
-	writer := resp.NewWriter(conn)
 
 	for {
 		cmd, err := parser.Parse()
@@ -28,15 +37,30 @@ func handleConnection(conn net.Conn, db *database.Database) {
 		}
 
 		log.Printf("command received: %+v\n", cmd)
+		
+		// Push parsed command to the Command Queue
+		cmdQueue <- CommandJob{client: conn, cmd: cmd}
+	}
+}
 
-		// Execute command against database
-		result := db.Exec(cmd)
-
-		err = writer.Write(result)
+func responseWorker(resQueue <-chan ResponseJob) {
+	for job := range resQueue {
+		writer := resp.NewWriter(job.client)
+		err := writer.Write(job.result)
 		if err != nil {
-			log.Println("err write:", err)
-			return
+			log.Println("err write to client", job.client.RemoteAddr(), ":", err)
 		}
+	}
+}
+
+func dbExecutor(db *database.Database, cmdQueue <-chan CommandJob, resQueue chan<- ResponseJob) {
+	log.Println("DB Executor started")
+	for job := range cmdQueue {
+		// Execute command sequentially in a single goroutine
+		result := db.Exec(job.cmd)
+		
+		// Push the result to the Response Queue
+		resQueue <- ResponseJob{client: job.client, result: result}
 	}
 }
 
@@ -51,14 +75,27 @@ func main() {
 	// Instantiate the database
 	db := database.NewDatabase()
 
+	// Create queues for inter-thread communication
+	cmdQueue := make(chan CommandJob, 1000)
+	resQueue := make(chan ResponseJob, 1000)
+
+	// 1. Start the single-threaded Database Executor
+	go dbExecutor(db, cmdQueue, resQueue)
+
+	// 2. Start a pool of Response Workers
+	numResponseWorkers := 4
+	for i := 0; i < numResponseWorkers; i++ {
+		go responseWorker(resQueue)
+	}
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Println(err)
+			log.Println("Accept error:", err)
 			continue
 		}
 
-		// create a go routine to handle the connection
-		go handleConnection(conn, db)
+		// 3. Dispatch the socket read event to a goroutine
+		go handleConnection(conn, cmdQueue)
 	}
 }

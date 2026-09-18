@@ -10,9 +10,7 @@ func execGet(db *Database, args []resp.Value) resp.Value {
 	}
 	key := args[0].Bulk
 
-	db.mu.RLock()
 	val, exists := db.data[key]
-	db.mu.RUnlock()
 
 	if !exists {
 		return resp.Value{Type: "null"}
@@ -27,9 +25,7 @@ func execSet(db *Database, args []resp.Value) resp.Value {
 	key := args[0].Bulk
 	val := args[1]
 
-	db.mu.Lock()
 	db.data[key] = val
-	db.mu.Unlock()
 
 	return resp.Value{Type: "string", Str: "OK"}
 }
@@ -40,7 +36,6 @@ func execDel(db *Database, args []resp.Value) resp.Value {
 	}
 
 	deletedCount := 0
-	db.mu.Lock()
 	for _, arg := range args {
 		key := arg.Bulk
 		if _, exists := db.data[key]; exists {
@@ -48,7 +43,6 @@ func execDel(db *Database, args []resp.Value) resp.Value {
 			deletedCount++
 		}
 	}
-	db.mu.Unlock()
 
 	return resp.Value{Type: "integer", Num: deletedCount}
 }

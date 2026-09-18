@@ -3,12 +3,10 @@ package database
 import (
 	"multi-threaded-Redis/Internal/resp"
 	"strings"
-	"sync"
 )
 
 type Database struct {
 	data map[string]resp.Value
-	mu   sync.RWMutex
 }
 
 func NewDatabase() *Database {
