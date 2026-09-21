@@ -10,12 +10,17 @@ func execGet(db *Database, args []resp.Value) resp.Value {
 	}
 	key := args[0].Bulk
 
-	val, exists := db.data[key]
+	entity, exists := db.data[key]
 
 	if !exists {
 		return resp.Value{Type: "null"}
 	}
-	return val
+
+	if entity.Type != TypeString {
+		return resp.Value{Type: "error", Str: "WRONGTYPE Operation against a key holding the wrong kind of value"}
+	}
+
+	return resp.Value{Type: "bulk", Bulk: entity.Val.(string)}
 }
 
 func execSet(db *Database, args []resp.Value) resp.Value {
@@ -23,9 +28,12 @@ func execSet(db *Database, args []resp.Value) resp.Value {
 		return resp.Value{Type: "error", Str: "ERR wrong number of arguments for 'set' command"}
 	}
 	key := args[0].Bulk
-	val := args[1]
+	val := args[1].Bulk
 
-	db.data[key] = val
+	db.data[key] = DataEntity{
+		Type: TypeString,
+		Val:  val,
+	}
 
 	return resp.Value{Type: "string", Str: "OK"}
 }

@@ -7,10 +7,19 @@ import (
 type CommandFunc func(db *Database, args []resp.Value) resp.Value
 
 var commands = map[string]CommandFunc{
-	"PING": execPing,
-	"GET":  execGet,
-	"SET":  execSet,
-	"DEL":  execDel,
+	"PING":    execPing,
+	"GET":     execGet,
+	"SET":     execSet,
+	"DEL":     execDel,
+	"LPUSH":   execLPush,
+	"RPUSH":   execRPush,
+	"LPOP":    execLPop,
+	"RPOP":    execRPop,
+	"LRANGE":  execLRange,
+	"HSET":    execHSet,
+	"HGET":    execHGet,
+	"HGETALL": execHGetAll,
+	"HDEL":    execHDel,
 }
 
 func execPing(db *Database, args []resp.Value) resp.Value {
@@ -22,3 +31,4 @@ func execPing(db *Database, args []resp.Value) resp.Value {
 	}
 	return resp.Value{Type: "error", Str: "ERR wrong number of arguments for 'ping' command"}
 }
+

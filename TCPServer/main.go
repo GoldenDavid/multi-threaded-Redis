@@ -9,6 +9,10 @@ import (
 	"multi-threaded-Redis/Internal/resp"
 )
 
+type ConnectionJob struct {
+	client net.Conn
+}
+
 type CommandJob struct {
 	client net.Conn
 	cmd    resp.Value
@@ -17,6 +21,12 @@ type CommandJob struct {
 type ResponseJob struct {
 	client net.Conn
 	result resp.Value
+}
+
+func parserWorker(connQueue <-chan ConnectionJob, cmdQueue chan<- CommandJob) {
+	for job := range connQueue {
+		handleConnection(job.client, cmdQueue)
+	}
 }
 
 func handleConnection(conn net.Conn, cmdQueue chan<- CommandJob) {
@@ -76,6 +86,7 @@ func main() {
 	db := database.NewDatabase()
 
 	// Create queues for inter-thread communication
+	connQueue := make(chan ConnectionJob, 1000)
 	cmdQueue := make(chan CommandJob, 1000)
 	resQueue := make(chan ResponseJob, 1000)
 
@@ -88,6 +99,12 @@ func main() {
 		go responseWorker(resQueue)
 	}
 
+	// 3. Start a pool of Parser Workers (Connection Pool)
+	numParserWorkers := 4
+	for i := 0; i < numParserWorkers; i++ {
+		go parserWorker(connQueue, cmdQueue)
+	}
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -95,7 +112,7 @@ func main() {
 			continue
 		}
 
-		// 3. Dispatch the socket read event to a goroutine
-		go handleConnection(conn, cmdQueue)
+		// 4. Dispatch the connection to the parser worker pool
+		connQueue <- ConnectionJob{client: conn}
 	}
 }

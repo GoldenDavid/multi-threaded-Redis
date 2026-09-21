@@ -5,13 +5,26 @@ import (
 	"strings"
 )
 
+type DataType string
+
+const (
+	TypeString DataType = "string"
+	TypeList   DataType = "list"
+	TypeHash   DataType = "hash"
+)
+
+type DataEntity struct {
+	Type DataType
+	Val  interface{}
+}
+
 type Database struct {
-	data map[string]resp.Value
+	data map[string]DataEntity
 }
 
 func NewDatabase() *Database {
 	return &Database{
-		data: make(map[string]resp.Value),
+		data: make(map[string]DataEntity),
 	}
 }
 
