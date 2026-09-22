@@ -13,12 +13,13 @@
 - Offload parsing and writing to worker threads.
 - Refactor Database execution to run on a single, dedicated goroutine.
 - Remove `sync.RWMutex` from Database as thread-safety is guaranteed by the single executor.
-
-### Current Tasks
 - Replace single dictionary map with more advanced data structures.
 - Support string, lists, dicts types properly.
 
+### Current Tasks
+- Implement AOF (Append Only File) Persistence.
+
 ### Future Roadmap
-- AOF (Append Only File) Persistence.
 - RDB Snapshotting.
+- Epoll / IO Multiplexing core implementation.
 
