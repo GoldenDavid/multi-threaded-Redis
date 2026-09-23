@@ -15,11 +15,11 @@
 - Remove `sync.RWMutex` from Database as thread-safety is guaranteed by the single executor.
 - Replace single dictionary map with more advanced data structures.
 - Support string, lists, dicts types properly.
-
-### Current Tasks
 - Implement AOF (Append Only File) Persistence.
 
-### Future Roadmap
+### Current Tasks
 - RDB Snapshotting.
+
+### Future Roadmap
 - Epoll / IO Multiplexing core implementation.
 

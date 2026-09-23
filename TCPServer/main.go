@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 
+	"multi-threaded-Redis/Internal/aof"
 	"multi-threaded-Redis/Internal/database"
 	"multi-threaded-Redis/Internal/resp"
 )
@@ -84,6 +85,23 @@ func main() {
 
 	// Instantiate the database
 	db := database.NewDatabase()
+
+	// Initialize AOF
+	aofPersister, err := aof.NewAof("appendonly.aof")
+	if err != nil {
+		log.Println("AOF init error:", err)
+	} else {
+		defer aofPersister.Close()
+
+		log.Println("Replaying AOF...")
+		aofPersister.Read(func(value resp.Value) {
+			db.Exec(value)
+		})
+		log.Println("AOF replay complete.")
+
+		// Bind AOF to Database to log future writes
+		db.SetAof(aofPersister)
+	}
 
 	// Create queues for inter-thread communication
 	connQueue := make(chan ConnectionJob, 1000)

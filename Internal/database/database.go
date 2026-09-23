@@ -1,6 +1,7 @@
 package database
 
 import (
+	"multi-threaded-Redis/Internal/aof"
 	"multi-threaded-Redis/Internal/resp"
 	"strings"
 )
@@ -20,12 +21,17 @@ type DataEntity struct {
 
 type Database struct {
 	data map[string]DataEntity
+	aof  *aof.Aof
 }
 
 func NewDatabase() *Database {
 	return &Database{
 		data: make(map[string]DataEntity),
 	}
+}
+
+func (db *Database) SetAof(a *aof.Aof) {
+	db.aof = a
 }
 
 func (db *Database) Exec(cmd resp.Value) resp.Value {
@@ -41,5 +47,27 @@ func (db *Database) Exec(cmd resp.Value) resp.Value {
 		return resp.Value{Type: "error", Str: "ERR unknown command '" + commandName + "'"}
 	}
 
-	return handler(db, args)
+	result := handler(db, args)
+
+	if db.aof != nil && isWriteCommand(commandName) {
+		if result.Type != "error" {
+			db.aof.Write(cmd)
+		}
+	}
+
+	return result
+}
+
+func isWriteCommand(cmdName string) bool {
+	writeCommands := map[string]bool{
+		"SET":   true,
+		"DEL":   true,
+		"LPUSH": true,
+		"RPUSH": true,
+		"LPOP":  true,
+		"RPOP":  true,
+		"HSET":  true,
+		"HDEL":  true,
+	}
+	return writeCommands[cmdName]
 }
