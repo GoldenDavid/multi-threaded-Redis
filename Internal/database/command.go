@@ -20,6 +20,18 @@ var commands = map[string]CommandFunc{
 	"HGET":    execHGet,
 	"HGETALL": execHGetAll,
 	"HDEL":    execHDel,
+	"SAVE":    execSave,
+}
+
+func execSave(db *Database, args []resp.Value) resp.Value {
+	if len(args) != 0 {
+		return resp.Value{Type: "error", Str: "ERR wrong number of arguments for 'save' command"}
+	}
+	err := db.SaveRDB("dump.rdb")
+	if err != nil {
+		return resp.Value{Type: "error", Str: "ERR " + err.Error()}
+	}
+	return resp.Value{Type: "string", Str: "OK"}
 }
 
 func execPing(db *Database, args []resp.Value) resp.Value {

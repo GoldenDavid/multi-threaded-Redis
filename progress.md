@@ -16,10 +16,14 @@
 - Replace single dictionary map with more advanced data structures.
 - Support string, lists, dicts types properly.
 - Implement AOF (Append Only File) Persistence.
+- Implement RDB Snapshotting.
 
 ### Current Tasks
-- RDB Snapshotting.
+- Epoll / IO Multiplexing core implementation.
+- Move away from `net.Listener` blocking and use multiplexing.
 
 ### Future Roadmap
-- Epoll / IO Multiplexing core implementation.
-
+- Dispatch socket read events to the ThreadPool.
+- ThreadPool parses RESP command and sends to a central Go channel (Command Queue).
+- Dedicated executor goroutine pops from Command Queue, executes, and pushes result to response queue.
+- ThreadPool workers handle serialization and writing to client sockets.
