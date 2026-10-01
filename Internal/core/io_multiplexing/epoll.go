@@ -14,7 +14,7 @@ type Epoll struct {
 	genericEvents []Event
 }
 
-func CreateIOMultiplexer() (*Epoll, error) {
+func CreateIOMultiplexer() (IOMultiplexer, error) {
 	epollFD, err := syscall.EpollCreate1(0)
 	if err != nil {
 		log.Fatal(err)

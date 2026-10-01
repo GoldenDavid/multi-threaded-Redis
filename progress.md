@@ -17,13 +17,13 @@
 - Support string, lists, dicts types properly.
 - Implement AOF (Append Only File) Persistence.
 - Implement RDB Snapshotting.
-
-### Current Tasks
 - Epoll / IO Multiplexing core implementation.
 - Move away from `net.Listener` blocking and use multiplexing.
 
-### Future Roadmap
+### Current Tasks
 - Dispatch socket read events to the ThreadPool.
 - ThreadPool parses RESP command and sends to a central Go channel (Command Queue).
+
+### Future Roadmap
 - Dedicated executor goroutine pops from Command Queue, executes, and pushes result to response queue.
 - ThreadPool workers handle serialization and writing to client sockets.

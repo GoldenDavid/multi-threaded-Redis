@@ -6,6 +6,7 @@ import (
 	"net"
 
 	"multi-threaded-Redis/Internal/aof"
+	"multi-threaded-Redis/Internal/core/io_multiplexing"
 	"multi-threaded-Redis/Internal/database"
 	"multi-threaded-Redis/Internal/resp"
 )
@@ -123,14 +124,54 @@ func main() {
 		go parserWorker(connQueue, cmdQueue)
 	}
 
-	for {
-		conn, err := listener.Accept()
+	multiplexer, err := io_multiplexing.CreateIOMultiplexer()
+	if err != nil {
+		log.Println("Multiplexer not supported, using blocking accept:", err)
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				log.Println("Accept error:", err)
+				continue
+			}
+
+			// 4. Dispatch the connection to the parser worker pool
+			connQueue <- ConnectionJob{client: conn}
+		}
+	} else {
+		defer multiplexer.Close()
+		log.Println("Using IO Multiplexing for connections")
+
+		tcpListener := listener.(*net.TCPListener)
+		file, err := tcpListener.File()
 		if err != nil {
-			log.Println("Accept error:", err)
-			continue
+			log.Fatal(err)
+		}
+		serverFd := int(file.Fd())
+
+		err = multiplexer.Monitor(io_multiplexing.Event{Fd: serverFd, Op: io_multiplexing.OpRead})
+		if err != nil {
+			log.Fatal(err)
 		}
 
-		// 4. Dispatch the connection to the parser worker pool
-		connQueue <- ConnectionJob{client: conn}
+		for {
+			events, err := multiplexer.Wait()
+			if err != nil {
+				log.Println("Multiplexer Wait error:", err)
+				continue
+			}
+
+			for _, ev := range events {
+				if ev.Fd == serverFd {
+					conn, err := listener.Accept()
+					if err != nil {
+						log.Println("Accept error:", err)
+						continue
+					}
+
+					// 4. Dispatch the connection to the parser worker pool
+					connQueue <- ConnectionJob{client: conn}
+				}
+			}
+		}
 	}
 }
