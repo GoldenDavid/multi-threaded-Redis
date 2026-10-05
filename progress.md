@@ -22,9 +22,13 @@
 
 - Dispatch socket read events to the ThreadPool.
 - ThreadPool parses RESP command and sends to a central Go channel (Command Queue).
-
-### Current Tasks
-
-### Future Roadmap
 - Dedicated executor goroutine pops from Command Queue, executes, and pushes result to response queue.
 - ThreadPool workers handle serialization and writing to client sockets.
+
+### Current Tasks
+- Unify the Thread Pool Framework: Refactor the implicit worker goroutines into a polished, generic ThreadPool system.
+- Implement Time-To-Live (TTL) & Background Expiration Engine for keys.
+
+### Future Roadmap
+- Implement non-blocking writes (`OpWrite`) using the IO multiplexer to handle socket backpressure.
+- Expand core data structures and commands (e.g., Sets `SADD`, `SMEMBERS` and Sorted Sets `ZADD`, `ZRANGE`).
