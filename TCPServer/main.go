@@ -11,8 +11,15 @@ import (
 	"multi-threaded-Redis/Internal/resp"
 )
 
-type ConnectionJob struct {
-	client net.Conn
+type ClientContext struct {
+	fd     int
+	conn   net.Conn
+	parser *resp.Parser
+}
+
+type ReadEventJob struct {
+	ctx      *ClientContext
+	fallback bool
 }
 
 type CommandJob struct {
@@ -25,33 +32,45 @@ type ResponseJob struct {
 	result resp.Value
 }
 
-func parserWorker(connQueue <-chan ConnectionJob, cmdQueue chan<- CommandJob) {
+func parserWorker(connQueue <-chan ReadEventJob, cmdQueue chan<- CommandJob) {
 	for job := range connQueue {
-		handleConnection(job.client, cmdQueue)
-	}
-}
-
-func handleConnection(conn net.Conn, cmdQueue chan<- CommandJob) {
-	defer conn.Close()
-	log.Println("handle conn from =", conn.RemoteAddr())
-
-	parser := resp.NewParser(conn)
-
-	for {
-		cmd, err := parser.Parse()
-		if err != nil {
-			if err == io.EOF {
-				log.Println("client disconnected: ", conn.RemoteAddr())
-			} else {
-				log.Println("client read error: ", err)
+		if job.fallback {
+			// Fallback: block and read continuously
+			for {
+				cmd, err := job.ctx.parser.Parse()
+				if err != nil {
+					if err == io.EOF {
+						log.Println("client disconnected:", job.ctx.conn.RemoteAddr())
+					} else {
+						log.Println("client read error:", err)
+					}
+					job.ctx.conn.Close()
+					break
+				}
+				log.Printf("command received: %+v\n", cmd)
+				cmdQueue <- CommandJob{client: job.ctx.conn, cmd: cmd}
 			}
-			return
+		} else {
+			// Event-driven: read available data then return to pool
+			for {
+				cmd, err := job.ctx.parser.Parse()
+				if err != nil {
+					if err == io.EOF {
+						log.Println("client disconnected:", job.ctx.conn.RemoteAddr())
+					} else {
+						log.Println("client read error:", err)
+					}
+					job.ctx.conn.Close()
+					break
+				}
+				log.Printf("command received: %+v\n", cmd)
+				cmdQueue <- CommandJob{client: job.ctx.conn, cmd: cmd}
+				
+				if !job.ctx.parser.HasMoreData() {
+					break
+				}
+			}
 		}
-
-		log.Printf("command received: %+v\n", cmd)
-		
-		// Push parsed command to the Command Queue
-		cmdQueue <- CommandJob{client: conn, cmd: cmd}
 	}
 }
 
@@ -105,7 +124,7 @@ func main() {
 	}
 
 	// Create queues for inter-thread communication
-	connQueue := make(chan ConnectionJob, 1000)
+	connQueue := make(chan ReadEventJob, 1000)
 	cmdQueue := make(chan CommandJob, 1000)
 	resQueue := make(chan ResponseJob, 1000)
 
@@ -135,7 +154,11 @@ func main() {
 			}
 
 			// 4. Dispatch the connection to the parser worker pool
-			connQueue <- ConnectionJob{client: conn}
+			clientCtx := &ClientContext{
+				conn:   conn,
+				parser: resp.NewParser(conn),
+			}
+			connQueue <- ReadEventJob{ctx: clientCtx, fallback: true}
 		}
 	} else {
 		defer multiplexer.Close()
@@ -153,6 +176,8 @@ func main() {
 			log.Fatal(err)
 		}
 
+		clients := make(map[int]*ClientContext)
+
 		for {
 			events, err := multiplexer.Wait()
 			if err != nil {
@@ -168,8 +193,32 @@ func main() {
 						continue
 					}
 
-					// 4. Dispatch the connection to the parser worker pool
-					connQueue <- ConnectionJob{client: conn}
+					tcpConn, ok := conn.(*net.TCPConn)
+					if !ok {
+						continue
+					}
+					clientFile, err := tcpConn.File()
+					if err != nil {
+						continue
+					}
+					clientFd := int(clientFile.Fd())
+
+					clientCtx := &ClientContext{
+						fd:     clientFd,
+						conn:   conn,
+						parser: resp.NewParser(conn),
+					}
+					clients[clientFd] = clientCtx
+
+					err = multiplexer.Monitor(io_multiplexing.Event{Fd: clientFd, Op: io_multiplexing.OpRead})
+					if err != nil {
+						log.Println("Monitor error:", err)
+					}
+				} else {
+					// 4. Dispatch read event to the parser worker pool
+					if clientCtx, ok := clients[ev.Fd]; ok {
+						connQueue <- ReadEventJob{ctx: clientCtx, fallback: false}
+					}
 				}
 			}
 		}

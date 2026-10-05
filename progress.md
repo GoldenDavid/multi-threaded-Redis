@@ -20,9 +20,10 @@
 - Epoll / IO Multiplexing core implementation.
 - Move away from `net.Listener` blocking and use multiplexing.
 
-### Current Tasks
 - Dispatch socket read events to the ThreadPool.
 - ThreadPool parses RESP command and sends to a central Go channel (Command Queue).
+
+### Current Tasks
 
 ### Future Roadmap
 - Dedicated executor goroutine pops from Command Queue, executes, and pushes result to response queue.

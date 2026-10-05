@@ -136,3 +136,7 @@ func (p *Parser) parseArray() (Value, error) {
 
 	return Value{Type: "array", Array: array}, nil
 }
+
+func (p *Parser) HasMoreData() bool {
+	return p.reader.Buffered() > 0
+}
