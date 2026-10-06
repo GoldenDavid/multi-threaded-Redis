@@ -4,11 +4,13 @@ import (
 	"io"
 	"log"
 	"net"
+	"time"
 
 	"multi-threaded-Redis/Internal/aof"
 	"multi-threaded-Redis/Internal/core/io_multiplexing"
 	"multi-threaded-Redis/Internal/database"
 	"multi-threaded-Redis/Internal/resp"
+	"multi-threaded-Redis/ThreadPool"
 )
 
 type ClientContext struct {
@@ -17,81 +19,90 @@ type ClientContext struct {
 	parser *resp.Parser
 }
 
-type ReadEventJob struct {
-	ctx      *ClientContext
-	fallback bool
-}
-
 type CommandJob struct {
 	client net.Conn
 	cmd    resp.Value
 }
 
-type ResponseJob struct {
+type ParseTask struct {
+	ctx      *ClientContext
+	fallback bool
+	cmdQueue chan<- CommandJob
+}
+
+func (pt *ParseTask) Execute() {
+	if pt.fallback {
+		// Fallback: block and read continuously
+		for {
+			cmd, err := pt.ctx.parser.Parse()
+			if err != nil {
+				if err == io.EOF {
+					log.Println("client disconnected:", pt.ctx.conn.RemoteAddr())
+				} else {
+					log.Println("client read error:", err)
+				}
+				pt.ctx.conn.Close()
+				break
+			}
+			log.Printf("command received: %+v\n", cmd)
+			pt.cmdQueue <- CommandJob{client: pt.ctx.conn, cmd: cmd}
+		}
+	} else {
+		// Event-driven: read available data then return to pool
+		for {
+			cmd, err := pt.ctx.parser.Parse()
+			if err != nil {
+				if err == io.EOF {
+					log.Println("client disconnected:", pt.ctx.conn.RemoteAddr())
+				} else {
+					log.Println("client read error:", err)
+				}
+				pt.ctx.conn.Close()
+				break
+			}
+			log.Printf("command received: %+v\n", cmd)
+			pt.cmdQueue <- CommandJob{client: pt.ctx.conn, cmd: cmd}
+			
+			if !pt.ctx.parser.HasMoreData() {
+				break
+			}
+		}
+	}
+}
+
+type ResponseTask struct {
 	client net.Conn
 	result resp.Value
 }
 
-func parserWorker(connQueue <-chan ReadEventJob, cmdQueue chan<- CommandJob) {
-	for job := range connQueue {
-		if job.fallback {
-			// Fallback: block and read continuously
-			for {
-				cmd, err := job.ctx.parser.Parse()
-				if err != nil {
-					if err == io.EOF {
-						log.Println("client disconnected:", job.ctx.conn.RemoteAddr())
-					} else {
-						log.Println("client read error:", err)
-					}
-					job.ctx.conn.Close()
-					break
-				}
-				log.Printf("command received: %+v\n", cmd)
-				cmdQueue <- CommandJob{client: job.ctx.conn, cmd: cmd}
-			}
-		} else {
-			// Event-driven: read available data then return to pool
-			for {
-				cmd, err := job.ctx.parser.Parse()
-				if err != nil {
-					if err == io.EOF {
-						log.Println("client disconnected:", job.ctx.conn.RemoteAddr())
-					} else {
-						log.Println("client read error:", err)
-					}
-					job.ctx.conn.Close()
-					break
-				}
-				log.Printf("command received: %+v\n", cmd)
-				cmdQueue <- CommandJob{client: job.ctx.conn, cmd: cmd}
-				
-				if !job.ctx.parser.HasMoreData() {
-					break
-				}
-			}
-		}
+func (rt *ResponseTask) Execute() {
+	writer := resp.NewWriter(rt.client)
+	err := writer.Write(rt.result)
+	if err != nil {
+		log.Println("err write to client", rt.client.RemoteAddr(), ":", err)
 	}
 }
 
-func responseWorker(resQueue <-chan ResponseJob) {
-	for job := range resQueue {
-		writer := resp.NewWriter(job.client)
-		err := writer.Write(job.result)
-		if err != nil {
-			log.Println("err write to client", job.client.RemoteAddr(), ":", err)
-		}
-	}
-}
-
-func dbExecutor(db *database.Database, cmdQueue <-chan CommandJob, resQueue chan<- ResponseJob) {
+func dbExecutor(db *database.Database, cmdQueue <-chan CommandJob, responsePool *threadpool.Pool) {
 	log.Println("DB Executor started")
-	for job := range cmdQueue {
-		// Execute command sequentially in a single goroutine
-		result := db.Exec(job.cmd)
-		
-		// Push the result to the Response Queue
-		resQueue <- ResponseJob{client: job.client, result: result}
+	ticker := time.NewTicker(100 * time.Millisecond) // Run active expiration every 100ms
+	defer ticker.Stop()
+
+	for {
+		select {
+		case job, ok := <-cmdQueue:
+			if !ok {
+				return
+			}
+			// Execute command sequentially in a single goroutine
+			result := db.Exec(job.cmd)
+			
+			// Push the result to the Response Pool
+			responsePool.AddTask(&ResponseTask{client: job.client, result: result})
+		case <-ticker.C:
+			// Active expiration in the same goroutine to ensure thread safety
+			db.DeleteExpiredKeys(20) // Delete up to 20 expired keys per tick
+		}
 	}
 }
 
@@ -124,24 +135,16 @@ func main() {
 	}
 
 	// Create queues for inter-thread communication
-	connQueue := make(chan ReadEventJob, 1000)
 	cmdQueue := make(chan CommandJob, 1000)
-	resQueue := make(chan ResponseJob, 1000)
 
-	// 1. Start the single-threaded Database Executor
-	go dbExecutor(db, cmdQueue, resQueue)
+	// 1. Start a pool of Response Workers
+	responsePool := threadpool.NewPool(4, 1000)
 
-	// 2. Start a pool of Response Workers
-	numResponseWorkers := 4
-	for i := 0; i < numResponseWorkers; i++ {
-		go responseWorker(resQueue)
-	}
+	// 2. Start the single-threaded Database Executor
+	go dbExecutor(db, cmdQueue, responsePool)
 
-	// 3. Start a pool of Parser Workers (Connection Pool)
-	numParserWorkers := 4
-	for i := 0; i < numParserWorkers; i++ {
-		go parserWorker(connQueue, cmdQueue)
-	}
+	// 3. Start a pool of Parser Workers
+	parserPool := threadpool.NewPool(4, 1000)
 
 	multiplexer, err := io_multiplexing.CreateIOMultiplexer()
 	if err != nil {
@@ -158,7 +161,7 @@ func main() {
 				conn:   conn,
 				parser: resp.NewParser(conn),
 			}
-			connQueue <- ReadEventJob{ctx: clientCtx, fallback: true}
+			parserPool.AddTask(&ParseTask{ctx: clientCtx, fallback: true, cmdQueue: cmdQueue})
 		}
 	} else {
 		defer multiplexer.Close()
@@ -217,7 +220,7 @@ func main() {
 				} else {
 					// 4. Dispatch read event to the parser worker pool
 					if clientCtx, ok := clients[ev.Fd]; ok {
-						connQueue <- ReadEventJob{ctx: clientCtx, fallback: false}
+						parserPool.AddTask(&ParseTask{ctx: clientCtx, fallback: false, cmdQueue: cmdQueue})
 					}
 				}
 			}

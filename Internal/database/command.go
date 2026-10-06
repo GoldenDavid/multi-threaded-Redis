@@ -21,6 +21,8 @@ var commands = map[string]CommandFunc{
 	"HGETALL": execHGetAll,
 	"HDEL":    execHDel,
 	"SAVE":    execSave,
+	"EXPIRE":  execExpire,
+	"TTL":     execTTL,
 }
 
 func execSave(db *Database, args []resp.Value) resp.Value {

@@ -4,6 +4,7 @@ import (
 	"multi-threaded-Redis/Internal/aof"
 	"multi-threaded-Redis/Internal/resp"
 	"strings"
+	"time"
 )
 
 type DataType string
@@ -21,12 +22,14 @@ type DataEntity struct {
 
 type Database struct {
 	data map[string]DataEntity
+	ttl  map[string]int64
 	aof  *aof.Aof
 }
 
 func NewDatabase() *Database {
 	return &Database{
 		data: make(map[string]DataEntity),
+		ttl:  make(map[string]int64),
 	}
 }
 
@@ -65,9 +68,47 @@ func isWriteCommand(cmdName string) bool {
 		"LPUSH": true,
 		"RPUSH": true,
 		"LPOP":  true,
-		"RPOP":  true,
-		"HSET":  true,
-		"HDEL":  true,
+		"RPOP":   true,
+		"HSET":   true,
+		"HDEL":   true,
+		"EXPIRE": true,
 	}
 	return writeCommands[cmdName]
+}
+
+func (db *Database) IsExpired(key string) bool {
+	deadline, ok := db.ttl[key]
+	if !ok {
+		return false
+	}
+	if time.Now().UnixMilli() > deadline {
+		return true
+	}
+	return false
+}
+
+func (db *Database) DeleteExpiredKeys(limit int) {
+	// Active expiration: sample a few keys with TTL, delete if expired
+	// Since Go maps iterate pseudo-randomly, this works well.
+	count := 0
+	for key, deadline := range db.ttl {
+		if count >= limit {
+			break
+		}
+		if time.Now().UnixMilli() > deadline {
+			delete(db.data, key)
+			delete(db.ttl, key)
+			// Ideally we also append DEL to AOF here, but keeping it simple for now.
+			if db.aof != nil {
+				db.aof.Write(resp.Value{
+					Type: "array",
+					Array: []resp.Value{
+						{Type: "bulk", Bulk: "DEL"},
+						{Type: "bulk", Bulk: key},
+					},
+				})
+			}
+		}
+		count++
+	}
 }
